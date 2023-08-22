@@ -2,6 +2,14 @@
 
 ![CarveMe](logo_300px.png)
 
+# THIS FORK:
+
+Mainly aims at two things:
+
+1) Modifying the universal model curation pipeline so it includes a larger number of reactions. Essentially by i) not removing reactions that are located in eukaryotic compartments, since many prokaryotes contain some of these reactions (i.e., cobalamin synthesis) and ii) modifying the curation pipeline so futile energy cycles are not checked in the universal model, but rather in each individual model. This is to avoid removing reactions that are part of futile cycles only in the universal model but not in the individual models (because they do not co-occur).
+
+2) Adding new functions to the curation pipeline.
+
 ## Genome-scale metabolic model reconstruction with CarveMe
 
 CarveMe is a python-based tool for genome-scale metabolic model reconstruction.
