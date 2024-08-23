@@ -49,24 +49,28 @@ def gapFill(model, universe, constraints=None, min_growth=0.1, scores=None, inpl
         solver._gapfill_flag = True
 
         for r_id in new_reactions:
-            solver.add_variable('y_' + r_id, 0, 1, vartype=VarType.BINARY, update=False)
+            solver.add_variable('y_' + r_id, 0, 1, vartype=VarType.BINARY)
 
         solver.update()
 
         for r_id in new_reactions:
-            solver.add_constraint('lb_' + r_id, {r_id: 1, 'y_'+r_id: bigM}, '>', 0, update=False)
-            solver.add_constraint('ub_' + r_id, {r_id: 1, 'y_'+r_id: -bigM}, '<', 0, update=False)
+            solver.add_constraint('lb_' + r_id, {r_id: 1, 'y_'+r_id: bigM}, '>', 0)
+            solver.add_constraint('ub_' + r_id, {r_id: 1, 'y_'+r_id: -bigM}, '<', 0)
 
         biomass = model.biomass_reaction
-        solver.add_constraint('min_growth', {biomass: 1}, '>', min_growth, update=False)
+        solver.add_constraint('min_growth', {biomass: 1}, '>', min_growth)
 
         solver.update()
 
     objective = {'y_'+r_id: 1.0 / (1.0 + scores.get(r_id, 0.0)) for r_id in new_reactions}
 
-    solution = solver.solve(linear=objective, minimize=True, constraints=constraints)
+    if solver.__class__.__name__ == 'SCIPSolver':
+        solver.problem.setParam('limits/time', 600)
+        solver.problem.setParam('limits/gap', 0.001)
+        
+    solution = solver.solve(objective, minimize=True, constraints=constraints, allow_suboptimal=True)
 
-    if solution.status == Status.OPTIMAL:
+    if solution.status == Status.OPTIMAL or solution.status == Status.SUBOPTIMAL:
 
         inactive = [r_id for r_id in new_reactions if abs(solution.values[r_id]) < abstol]
 
@@ -116,7 +120,7 @@ def multiGapFill(model, universe, media, media_db, min_growth=0.1, max_uptake=10
             universe.set_flux_bounds(r_id, lb=0)
 
     merged_model = merge_models(model, universe, inplace=False)
-    solver = solver_instance(merged_model)
+#    solver = solver_instance(merged_model)
 
     if spent_model:
         solver0 = solver_instance(spent_model)
@@ -137,7 +141,8 @@ def multiGapFill(model, universe, media, media_db, min_growth=0.1, max_uptake=10
                             print("added", r_id[5:-2], "to", medium_name)
 
             gapFill(model, universe, constraints=constraints, min_growth=min_growth,
-                    scores=scores, inplace=True, bigM=bigM, solver=solver, tag=medium_name)
+                    scores=scores, inplace=True, bigM=bigM, tag=medium_name)#,solver=solver, )
+            
         else:
             print('Medium {} not in database, ignored.'.format(medium_name))
 
