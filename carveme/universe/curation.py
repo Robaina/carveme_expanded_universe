@@ -247,10 +247,10 @@ def curate_universe(model, outputfile, model_specific_data, bigg_models, taxa, b
     print(f'Curating {taxa} universe...')
     print(f'Initial model size: {len(model.metabolites)} x {len(model.reactions)}')
 
-    remove_compartments(model, taxa)
+    # remove_compartments(model, taxa)
 
     model_specific_data['reaction'] = model_specific_data['reaction'].apply(lambda x: 'R_' + x)
-    filter_reactions_by_kingdom(model, taxa, model_specific_data, bigg_models)
+    # filter_reactions_by_kingdom(model, taxa, model_specific_data, bigg_models)
 
     clean_up_atp_synthases(model)
 
