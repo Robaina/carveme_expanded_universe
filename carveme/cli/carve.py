@@ -23,13 +23,14 @@ import pandas as pd
 from multiprocessing import Pool
 from glob import glob
 import subprocess
+import sys
 
 
 def first_run_check():
     diamond_db = project_dir + config.get("generated", "diamond_db")
     if not os.path.exists(diamond_db):
         print(
-            f"Running diamond for the first time, please wait while we build the internal database...{diamond_db}"
+            f"Running diamond for the first time, please wait while we build the internal database...location: {diamond_db}"
         )
         fasta_file = project_dir + config.get("generated", "fasta_file")
         cmd = ["diamond", "makedb", "--in", fasta_file, "-d", diamond_db[:-5]]
@@ -49,6 +50,66 @@ def build_model_id(name):
     if not model_id[0].isalpha():
         model_id = "m_" + model_id
     return model_id
+
+
+def read_config_file(config_file: str) -> pd.DataFrame:
+    """
+    Read and validate the configuration TSV file.
+
+    Expected columns: genome, universe, media_file, medium_id
+
+    Args:
+        config_file: Path to the TSV configuration file
+
+    Returns:
+        DataFrame containing the validated configuration
+    """
+    try:
+        config = pd.read_csv(config_file, sep="\t")
+        required_columns = ["genome", "universe", "media_file", "medium_id"]
+
+        # Check for required columns
+        missing_cols = set(required_columns) - set(config.columns)
+        if missing_cols:
+            print(f"Error: Missing required columns in config file: {missing_cols}")
+            sys.exit(1)
+
+        # Validate file existence
+        for col in ["genome", "universe", "media_file"]:
+            invalid_files = [f for f in config[col] if not os.path.isfile(f)]
+            if invalid_files:
+                print(f"Error: Following {col} files not found:")
+                for f in invalid_files:
+                    print(f"  - {f}")
+                sys.exit(1)
+
+        return config
+    except Exception as e:
+        print(f"Error reading config file: {str(e)}")
+        sys.exit(1)
+
+
+def process_genome(args: tuple) -> None:
+    """
+    Process a single genome with specific configuration.
+
+    Args:
+        args: Tuple containing (genome_path, genome_params, verbose, debug)
+    """
+    genome_path, params, verbose, debug = args
+
+    return maincall(
+        inputfile=genome_path,
+        input_type="protein",
+        outputfile=params.get("output"),
+        universe_file=params["universe"],
+        verbose=verbose,
+        debug=debug,
+        gapfill=params["medium_id"],
+        init=params["medium_id"],
+        mediadb=params["media_file"],
+        recursive_mode=True,
+    )
 
 
 def maincall(
@@ -309,9 +370,7 @@ def maincall(
             m2, n2 = len(model.metabolites), len(model.reactions)
             print(f"Added {(n2 - n1)} reactions and {(m2 - m1)} metabolites")
 
-        if (
-            init_env
-        ):  # Initializes environment again as new exchange reactions can be acquired during gap-filling
+        if init_env:
             init_env.apply(model, inplace=True, warning=False)
 
         save_cbmodel(model, outputfile, flavor=flavor)
@@ -321,7 +380,6 @@ def maincall(
 
 
 def main():
-
     parser = argparse.ArgumentParser(
         description="Reconstruct a metabolic model using CarveMe",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -334,6 +392,12 @@ def main():
         help="Input (protein fasta file by default, see other options for details).\n"
         + "When used with -r an input pattern with wildcards can also be used.\n"
         + "When used with --refseq an NCBI RefSeq assembly accession is expected.",
+    )
+
+    # Add new config file argument
+    parser.add_argument(
+        "--config",
+        help="Path to TSV configuration file with columns: genome, universe, media_file, medium_id",
     )
 
     input_type_args = parser.add_mutually_exclusive_group()
@@ -488,12 +552,51 @@ def main():
 
     if args.solver:
         set_default_solver(args.solver)
-    #    else:
-    #        set_default_solver(config.get('solver', 'default_solver'))
 
     first_run_check()
 
-    if not args.recursive:
+    if args.recursive:
+        if args.config:
+            # Use config file
+            config_df = read_config_file(args.config)
+
+            def process_with_config(genome_row):
+                params = {
+                    "universe": genome_row["universe"],
+                    "media_file": genome_row["media_file"],
+                    "medium_id": genome_row["medium_id"],
+                    "output": args.output if args.output else None,
+                }
+                return process_genome(
+                    (genome_row["genome"], params, args.verbose, args.debug)
+                )
+
+            with Pool() as p:
+                p.map(process_with_config, [row for _, row in config_df.iterrows()])
+
+        else:
+            # Original recursive processing
+            def f(x):
+                maincall(
+                    inputfile=x,
+                    input_type=input_type,
+                    outputfile=args.output,
+                    universe=args.universe,
+                    universe_file=args.universe_file,
+                    ensemble_size=args.ensemble,
+                    verbose=args.verbose,
+                    debug=args.debug,
+                    flavor=flavor,
+                    gapfill=args.gapfill,
+                    init=args.init,
+                    mediadb=args.mediadb,
+                    recursive_mode=True,
+                )
+
+            p = Pool()
+            p.map(f, args.input)
+
+    else:
         if len(args.input) > 1:
             parser.error("Use -r when specifying more than one input file")
 
@@ -509,7 +612,7 @@ def main():
             debug=args.debug,
             flavor=flavor,
             gapfill=args.gapfill,
-            blind_gapfill=False,
+            blind_gapfill=args.blind_gapfill,
             init=args.init,
             mediadb=args.mediadb,
             default_score=args.default_score,
@@ -520,36 +623,6 @@ def main():
             reference=args.reference,
             ref_score=args.reference_score,
         )
-
-    else:
-
-        def f(x):
-            maincall(
-                inputfile=x,
-                input_type=input_type,
-                outputfile=args.output,
-                diamond_args=args.diamond_args,
-                universe=args.universe,
-                universe_file=args.universe_file,
-                ensemble_size=args.ensemble,
-                verbose=args.verbose,
-                flavor=flavor,
-                gapfill=args.gapfill,
-                blind_gapfill=False,
-                init=args.init,
-                mediadb=args.mediadb,
-                default_score=args.default_score,
-                uptake_score=args.uptake_score,
-                soft_score=args.soft_score,
-                soft=args.soft,
-                hard=args.hard,
-                reference=args.reference,
-                ref_score=args.reference_score,
-                recursive_mode=True,
-            )
-
-        p = Pool()
-        p.map(f, args.input)
 
 
 if __name__ == "__main__":
