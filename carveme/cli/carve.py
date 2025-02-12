@@ -388,10 +388,11 @@ def main():
     parser.add_argument(
         "input",
         metavar="INPUT",
-        nargs="+",
+        nargs="*",  # Changed from '+' to '*' to make it optional
         help="Input (protein fasta file by default, see other options for details).\n"
         + "When used with -r an input pattern with wildcards can also be used.\n"
-        + "When used with --refseq an NCBI RefSeq assembly accession is expected.",
+        + "When used with --refseq an NCBI RefSeq assembly accession is expected.\n"
+        + "Not required when using --config option.",
     )
 
     # Add new config file argument
@@ -515,6 +516,13 @@ def main():
     parser.add_argument("--blind-gapfill", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
+
+    # Validate input requirements
+    if not args.config and not args.input:
+        parser.error("Either --config or INPUT must be provided")
+
+    if args.config and args.input:
+        parser.error("Cannot use both --config and INPUT. Please use one or the other.")
 
     if args.gapfill and args.ensemble:
         parser.error(
