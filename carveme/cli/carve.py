@@ -379,19 +379,22 @@ def maincall(
         print("Done.")
 
 
-def process_with_config(genome_row):
+def process_with_config(genome_row, output_path, verbose, debug):
     """Process a single genome row from the config file.
 
     Args:
         genome_row: A row from the config DataFrame containing genome info
+        output_path: Path to output directory
+        verbose: Verbose flag
+        debug: Debug flag
     """
     params = {
         "universe": genome_row["universe"],
         "media_file": genome_row["media_file"],
         "medium_id": genome_row["medium_id"],
-        "output": args.output if args.output else None,
+        "output": output_path,
     }
-    return process_genome((genome_row["genome"], params, args.verbose, args.debug))
+    return process_genome((genome_row["genome"], params, verbose, debug))
 
 
 def main():
@@ -583,8 +586,18 @@ def main():
             # Use config file
             config_df = read_config_file(args.config)
 
+            # Create a partial function with the fixed arguments
+            from functools import partial
+
+            process_fn = partial(
+                process_with_config,
+                output_path=args.output,
+                verbose=args.verbose,
+                debug=args.debug,
+            )
+
             with Pool() as p:
-                p.map(process_with_config, [row for _, row in config_df.iterrows()])
+                p.map(process_fn, [row for _, row in config_df.iterrows()])
 
         else:
             # Original recursive processing
