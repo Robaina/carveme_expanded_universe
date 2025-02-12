@@ -379,6 +379,21 @@ def maincall(
         print("Done.")
 
 
+def process_with_config(genome_row):
+    """Process a single genome row from the config file.
+
+    Args:
+        genome_row: A row from the config DataFrame containing genome info
+    """
+    params = {
+        "universe": genome_row["universe"],
+        "media_file": genome_row["media_file"],
+        "medium_id": genome_row["medium_id"],
+        "output": args.output if args.output else None,
+    }
+    return process_genome((genome_row["genome"], params, args.verbose, args.debug))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Reconstruct a metabolic model using CarveMe",
@@ -567,17 +582,6 @@ def main():
         if args.config:
             # Use config file
             config_df = read_config_file(args.config)
-
-            def process_with_config(genome_row):
-                params = {
-                    "universe": genome_row["universe"],
-                    "media_file": genome_row["media_file"],
-                    "medium_id": genome_row["medium_id"],
-                    "output": args.output if args.output else None,
-                }
-                return process_genome(
-                    (genome_row["genome"], params, args.verbose, args.debug)
-                )
 
             with Pool() as p:
                 p.map(process_with_config, [row for _, row in config_df.iterrows()])
