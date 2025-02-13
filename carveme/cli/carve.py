@@ -1,3 +1,13 @@
+#!/usr/bin/env python
+import argparse
+import os
+import os.path
+import subprocess
+import warnings
+import pandas as pd
+from multiprocessing import Pool
+from glob import glob
+
 from carveme import config, project_dir
 from carveme import __version__ as version
 from carveme.reconstruction.carving import carve_model, build_ensemble
@@ -16,13 +26,6 @@ from reframed.cobra.ensemble import save_ensemble
 from reframed import load_cbmodel, save_cbmodel, Environment, set_default_solver
 from reframed.io.sbml import sanitize_id
 from reframed.core.transformation import apply_bounds
-import argparse
-import os
-import os.path
-import pandas as pd
-from multiprocessing import Pool
-from glob import glob
-import subprocess
 
 
 def first_run_check():
@@ -206,7 +209,6 @@ def maincall(
             "The input genome did not match sufficient genes/reactions in the database."
         )
         return
-
     if not flavor:
         flavor = config.get("sbml", "default_flavor")
     init_env = None
@@ -218,7 +220,6 @@ def maincall(
     universe_model.metadata["Description"] = (
         "This model was built with CarveMe version " + version
     )
-
     if ensemble_size is None or ensemble_size <= 1:
         if verbose:
             print("Reconstructing a single model")
@@ -247,11 +248,9 @@ def maincall(
         annotate_genes(ensemble.model, gene2gene, gene_annotations)
         save_ensemble(ensemble, outputfile, flavor=flavor)
         return
-
     if model is None:
         print("Failed to build model.")
         return
-
     if not gapfill:
         save_cbmodel(model, outputfile, flavor=flavor)
     else:
@@ -276,14 +275,42 @@ def maincall(
         if verbose:
             m2, n2 = len(model.metabolites), len(model.reactions)
             print(f"Added {(n2 - n1)} reactions and {(m2 - m1)} metabolites")
-        if init_env:  # Re-apply environment after gap-filling
+        if init_env:
             init_env.apply(model, inplace=True, warning=False)
         save_cbmodel(model, outputfile, flavor=flavor)
     if verbose:
         print("Done.")
 
 
-def main():
+# Worker function for multiprocessing (must be top-level for pickling)
+def process_row(row, args, input_type, flavor):
+    maincall(
+        inputfile=row["genome"],
+        input_type=input_type,
+        outputfile=args.output,
+        diamond_args=args.diamond_args,
+        universe=None,
+        universe_file=row["universe"],
+        ensemble_size=args.ensemble,
+        verbose=args.verbose,
+        debug=args.debug,
+        flavor=flavor,
+        gapfill=row["medium_id"],
+        blind_gapfill=False,
+        init=None,
+        mediadb=row["media_file"],
+        default_score=args.default_score,
+        uptake_score=args.uptake_score,
+        soft_score=args.soft_score,
+        soft=args.soft,
+        hard=args.hard,
+        reference=args.reference,
+        ref_score=args.reference_score,
+        recursive_mode=True,
+    )
+
+
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Reconstruct a metabolic model using CarveMe",
         formatter_class=argparse.RawTextHelpFormatter,
@@ -296,13 +323,11 @@ def main():
         "When used with -r an input pattern with wildcards can also be used.\n"
         "When used with --refseq an NCBI RefSeq assembly accession is expected.",
     )
-    # New flag for TSV input
     parser.add_argument(
         "--tsv",
         action="store_true",
         help="Interpret the input file as a TSV file with columns: genome, universe, media_file, medium_id",
     )
-
     input_type_args = parser.add_mutually_exclusive_group()
     input_type_args.add_argument(
         "--dna", action="store_true", help="Build from DNA fasta file"
@@ -318,7 +343,6 @@ def main():
         action="store_true",
         help="Download genome from NCBI RefSeq and build",
     )
-
     parser.add_argument(
         "--diamond-args", help="Additional arguments for running diamond"
     )
@@ -402,9 +426,12 @@ def main():
         "--reference-score", type=float, default=0.0, help=argparse.SUPPRESS
     )
     parser.add_argument("--blind-gapfill", action="store_true", help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # Set input type based on flags
+
+def main():
+    warnings.filterwarnings("ignore", module="pyscipopt")
+    args = parse_arguments()
     if args.egg:
         input_type = "eggnog"
     elif args.dna:
@@ -415,71 +442,33 @@ def main():
         input_type = "refseq"
     else:
         input_type = "protein"
-
     if args.fbc2:
         flavor = "fbc2"
     elif args.cobra:
         flavor = "cobra"
     else:
         flavor = config.get("sbml", "default_flavor")
-
     if args.solver:
         set_default_solver(args.solver)
-
     first_run_check()
-
-    # If TSV flag is provided, parse the TSV and process each row
     if args.tsv:
         try:
             tsv_df = pd.read_csv(args.input[0], sep="\t")
         except Exception as e:
             print("Error reading TSV file:", e)
             return
-
         required_cols = {"genome", "universe", "media_file", "medium_id"}
         if not required_cols.issubset(tsv_df.columns):
             print("TSV file must contain the following columns:", required_cols)
             return
-
-        def process_row(row):
-            # Here we pass the TSV columns to the proper parameters:
-            # - 'genome' -> inputfile
-            # - 'universe' -> universe_file (overriding the default universe)
-            # - 'media_file' -> mediadb
-            # - 'medium_id' -> gapfill (you could also pass as init if desired)
-            maincall(
-                inputfile=row["genome"],
-                input_type=input_type,
-                outputfile=args.output,
-                diamond_args=args.diamond_args,
-                universe=None,
-                universe_file=row["universe"],
-                ensemble_size=args.ensemble,
-                verbose=args.verbose,
-                debug=args.debug,
-                flavor=flavor,
-                gapfill=row["medium_id"],
-                blind_gapfill=False,
-                init=None,
-                mediadb=row["media_file"],
-                default_score=args.default_score,
-                uptake_score=args.uptake_score,
-                soft_score=args.soft_score,
-                soft=args.soft,
-                hard=args.hard,
-                reference=args.reference,
-                ref_score=args.reference_score,
-                recursive_mode=True,  # so output file naming follows the recursive branch
-            )
-
         rows = tsv_df.to_dict(orient="records")
         if len(rows) > 1:
-            pool = Pool()
-            pool.map(process_row, rows)
-            pool.close()
-            pool.join()
+            with Pool(processes=args.processes) as pool:
+                pool.starmap(
+                    process_row, [(row, args, input_type, flavor) for row in rows]
+                )
         else:
-            process_row(rows[0])
+            process_row(rows[0], args, input_type, flavor)
     else:
         if args.recursive:
 
@@ -508,10 +497,8 @@ def main():
                     recursive_mode=True,
                 )
 
-            p = Pool()
-            p.map(f, args.input)
-            p.close()
-            p.join()
+            with Pool() as p:
+                p.map(f, args.input)
         else:
             if len(args.input) > 1:
                 parser.error("Use -r when specifying more than one input file")
