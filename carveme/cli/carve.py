@@ -52,66 +52,6 @@ def build_model_id(name):
     return model_id
 
 
-def read_config_file(config_file: str) -> pd.DataFrame:
-    """
-    Read and validate the configuration TSV file.
-
-    Expected columns: genome, universe, media_file, medium_id
-
-    Args:
-        config_file: Path to the TSV configuration file
-
-    Returns:
-        DataFrame containing the validated configuration
-    """
-    try:
-        config = pd.read_csv(config_file, sep="\t")
-        required_columns = ["genome", "universe", "media_file", "medium_id"]
-
-        # Check for required columns
-        missing_cols = set(required_columns) - set(config.columns)
-        if missing_cols:
-            print(f"Error: Missing required columns in config file: {missing_cols}")
-            sys.exit(1)
-
-        # Validate file existence
-        for col in ["genome", "universe", "media_file"]:
-            invalid_files = [f for f in config[col] if not os.path.isfile(f)]
-            if invalid_files:
-                print(f"Error: Following {col} files not found:")
-                for f in invalid_files:
-                    print(f"  - {f}")
-                sys.exit(1)
-
-        return config
-    except Exception as e:
-        print(f"Error reading config file: {str(e)}")
-        sys.exit(1)
-
-
-def process_genome(args: tuple) -> None:
-    """
-    Process a single genome with specific configuration.
-
-    Args:
-        args: Tuple containing (genome_path, genome_params, verbose, debug)
-    """
-    genome_path, params, verbose, debug = args
-
-    return maincall(
-        inputfile=genome_path,
-        input_type="protein",
-        outputfile=params.get("output"),
-        universe_file=params["universe"],
-        verbose=verbose,
-        debug=debug,
-        gapfill=params["medium_id"],
-        init=params["medium_id"],
-        mediadb=params["media_file"],
-        recursive_mode=True,
-    )
-
-
 def maincall(
     inputfile,
     input_type="protein",
@@ -379,22 +319,87 @@ def maincall(
         print("Done.")
 
 
-def process_with_config(genome_row, output_path, verbose, debug):
-    """Process a single genome row from the config file.
+def read_input_file(input_file: str) -> pd.DataFrame:
+    """
+    Read and validate the input TSV file.
+
+    Expected columns: genome, universe, media_file, medium_id
 
     Args:
-        genome_row: A row from the config DataFrame containing genome info
+        input_file: Path to the TSV input file
+
+    Returns:
+        DataFrame containing the validated input data
+    """
+    try:
+        # Read the TSV file
+        if not os.path.exists(input_file):
+            print(f"Error: Input file not found: {input_file}")
+            sys.exit(1)
+
+        input_data = pd.read_csv(input_file, sep="\t")
+
+        # Define required columns
+        required_columns = ["genome", "universe", "media_file", "medium_id"]
+
+        # Check for required columns
+        missing_cols = set(required_columns) - set(input_data.columns)
+        if missing_cols:
+            print(f"Error: Missing required columns in input file: {missing_cols}")
+            sys.exit(1)
+
+        # Validate file existence for each genome, universe, and media file
+        for col in ["genome", "universe", "media_file"]:
+            invalid_files = [f for f in input_data[col] if not os.path.isfile(f)]
+            if invalid_files:
+                print(f"Error: Following {col} files not found:")
+                for f in invalid_files:
+                    print(f"  - {f}")
+                sys.exit(1)
+
+        # Validate that medium_id is not empty
+        if input_data["medium_id"].isnull().any():
+            print("Error: medium_id column contains empty values")
+            sys.exit(1)
+
+        return input_data
+
+    except pd.errors.EmptyDataError:
+        print(f"Error: Input file is empty: {input_file}")
+        sys.exit(1)
+    except pd.errors.ParserError:
+        print(
+            f"Error: Failed to parse input file (make sure it's a valid TSV): {input_file}"
+        )
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error reading input file: {str(e)}")
+        sys.exit(1)
+
+
+def process_genome_entry(genome_row, output_path, input_type, flavor, verbose, debug):
+    """Process a single genome entry from the input file.
+
+    Args:
+        genome_row: A row from the input DataFrame containing genome info
         output_path: Path to output directory
+        input_type: Type of input (protein, dna, eggnog, diamond)
+        flavor: SBML flavor (fbc2, cobra, or default)
         verbose: Verbose flag
         debug: Debug flag
     """
-    params = {
-        "universe": genome_row["universe"],
-        "media_file": genome_row["media_file"],
-        "medium_id": genome_row["medium_id"],
-        "output": output_path,
-    }
-    return process_genome((genome_row["genome"], params, verbose, debug))
+    return maincall(
+        inputfile=genome_row["genome"],
+        input_type=input_type,
+        outputfile=f"{output_path}/{os.path.basename(genome_row['genome'])}.xml",
+        universe=genome_row["universe"],
+        gapfill=genome_row["medium_id"],
+        init=genome_row["medium_id"],
+        mediadb=genome_row["media_file"],
+        verbose=verbose,
+        debug=debug,
+        flavor=flavor,
+    )
 
 
 def main():
@@ -403,20 +408,11 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
+    # Input file is required
     parser.add_argument(
-        "input",
-        metavar="INPUT",
-        nargs="*",  # Changed from '+' to '*' to make it optional
-        help="Input (protein fasta file by default, see other options for details).\n"
-        + "When used with -r an input pattern with wildcards can also be used.\n"
-        + "When used with --refseq an NCBI RefSeq assembly accession is expected.\n"
-        + "Not required when using --config option.",
-    )
-
-    # Add new config file argument
-    parser.add_argument(
-        "--config",
-        help="Path to TSV configuration file with columns: genome, universe, media_file, medium_id",
+        "--input",
+        required=True,
+        help="Path to TSV input file with columns: genome, universe, media_file, medium_id",
     )
 
     input_type_args = parser.add_mutually_exclusive_group()
@@ -440,18 +436,19 @@ def main():
     )
 
     parser.add_argument(
-        "-r",
-        "--recursive",
-        action="store_true",
-        dest="recursive",
-        help="Bulk reconstruction from folder with genome files",
+        "-p",
+        "--processes",
+        type=int,
+        default=1,
+        help="Number of processes to use for parallel genome processing (default: 1)",
     )
 
     parser.add_argument(
         "-o",
         "--output",
         dest="output",
-        help="SBML output file (or output folder if -r is used)",
+        required=True,
+        help="Output folder for generated models",
     )
 
     univ = parser.add_mutually_exclusive_group()
@@ -535,13 +532,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate input requirements
-    if not args.config and not args.input:
-        parser.error("Either --config or INPUT must be provided")
-
-    if args.config and args.input:
-        parser.error("Cannot use both --config and INPUT. Please use one or the other.")
-
+    # Validate arguments
     if args.gapfill and args.ensemble:
         parser.error(
             "Gap fill and ensemble generation cannot currently be combined (not implemented yet)."
@@ -555,8 +546,8 @@ def main():
     if args.mediadb and not args.gapfill:
         parser.error("--mediadb can only be used with --gapfill")
 
-    if args.recursive and args.refseq:
-        parser.error("-r cannot be combined with --refseq")
+    if args.refseq:
+        parser.error("--refseq is not supported with config mode")
 
     if args.egg:
         input_type = "eggnog"
@@ -564,8 +555,6 @@ def main():
         input_type = "dna"
     elif args.diamond:
         input_type = "diamond"
-    elif args.refseq:
-        input_type = "refseq"
     else:
         input_type = "protein"
 
@@ -581,73 +570,29 @@ def main():
 
     first_run_check()
 
-    if args.recursive:
-        if args.config:
-            # Use config file
-            config_df = read_config_file(args.config)
+    # Read and validate input file
+    input_df = read_input_file(args.input)
 
-            # Create a partial function with the fixed arguments
-            from functools import partial
+    # Create a partial function with the fixed arguments
+    from functools import partial
 
-            process_fn = partial(
-                process_with_config,
-                output_path=args.output,
-                verbose=args.verbose,
-                debug=args.debug,
-            )
+    process_fn = partial(
+        process_genome_entry,
+        output_path=args.output,
+        input_type=input_type,
+        flavor=flavor,
+        verbose=args.verbose,
+        debug=args.debug,
+    )
 
-            with Pool() as p:
-                p.map(process_fn, [row for _, row in config_df.iterrows()])
-
-        else:
-            # Original recursive processing
-            def f(x):
-                maincall(
-                    inputfile=x,
-                    input_type=input_type,
-                    outputfile=args.output,
-                    universe=args.universe,
-                    universe_file=args.universe_file,
-                    ensemble_size=args.ensemble,
-                    verbose=args.verbose,
-                    debug=args.debug,
-                    flavor=flavor,
-                    gapfill=args.gapfill,
-                    init=args.init,
-                    mediadb=args.mediadb,
-                    recursive_mode=True,
-                )
-
-            p = Pool()
-            p.map(f, args.input)
-
+    # Process genomes based on number of processes
+    if args.processes > 1:
+        with Pool(processes=args.processes) as p:
+            p.map(process_fn, [row for _, row in input_df.iterrows()])
     else:
-        if len(args.input) > 1:
-            parser.error("Use -r when specifying more than one input file")
-
-        maincall(
-            inputfile=args.input[0],
-            input_type=input_type,
-            outputfile=args.output,
-            diamond_args=args.diamond_args,
-            universe=args.universe,
-            universe_file=args.universe_file,
-            ensemble_size=args.ensemble,
-            verbose=args.verbose,
-            debug=args.debug,
-            flavor=flavor,
-            gapfill=args.gapfill,
-            blind_gapfill=args.blind_gapfill,
-            init=args.init,
-            mediadb=args.mediadb,
-            default_score=args.default_score,
-            uptake_score=args.uptake_score,
-            soft_score=args.soft_score,
-            soft=args.soft,
-            hard=args.hard,
-            reference=args.reference,
-            ref_score=args.reference_score,
-        )
+        # Sequential processing
+        for _, row in input_df.iterrows():
+            process_fn(row)
 
 
 if __name__ == "__main__":
