@@ -21,6 +21,7 @@ import os
 import os.path
 import pandas as pd
 from multiprocessing import Pool
+from functools import partial
 from glob import glob
 import subprocess
 import sys
@@ -392,7 +393,7 @@ def process_genome_entry(genome_row, output_path, input_type, flavor, verbose, d
         inputfile=genome_row["genome"],
         input_type=input_type,
         outputfile=f"{output_path}/{os.path.basename(genome_row['genome'])}.xml",
-        universe=genome_row["universe"],
+        universe_file=genome_row["universe"],  # Use universe_file instead of universe
         gapfill=genome_row["medium_id"],
         init=genome_row["medium_id"],
         mediadb=genome_row["media_file"],
@@ -572,9 +573,6 @@ def main():
 
     # Read and validate input file
     input_df = read_input_file(args.input)
-
-    # Create a partial function with the fixed arguments
-    from functools import partial
 
     process_fn = partial(
         process_genome_entry,
