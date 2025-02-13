@@ -21,17 +21,15 @@ import os
 import os.path
 import pandas as pd
 from multiprocessing import Pool
-from functools import partial
 from glob import glob
 import subprocess
-import sys
 
 
 def first_run_check():
     diamond_db = project_dir + config.get("generated", "diamond_db")
     if not os.path.exists(diamond_db):
         print(
-            f"Running diamond for the first time, please wait while we build the internal database...location: {diamond_db}"
+            "Running diamond for the first time, please wait while we build the internal database..."
         )
         fasta_file = project_dir + config.get("generated", "fasta_file")
         cmd = ["diamond", "makedb", "--in", fasta_file, "-d", diamond_db[:-5]]
@@ -80,12 +78,10 @@ def maincall(
 
     if recursive_mode:
         model_id = os.path.splitext(os.path.basename(inputfile))[0]
-
         if outputfile:
             outputfile = f"{outputfile}/{model_id}.xml"
         else:
             outputfile = os.path.splitext(inputfile)[0] + ".xml"
-
     else:
         if outputfile:
             model_id = os.path.splitext(os.path.basename(outputfile))[0]
@@ -94,9 +90,7 @@ def maincall(
             outputfile = os.path.splitext(inputfile)[0] + ".xml"
 
     model_id = build_model_id(model_id)
-
     outputfolder = os.path.abspath(os.path.dirname(outputfile))
-
     if not os.path.exists(outputfolder):
         try:
             os.makedirs(outputfolder)
@@ -121,17 +115,13 @@ def maincall(
         hard_constraints = None
 
     if input_type == "refseq":
-
         if verbose:
             print(f"Downloading genome {inputfile} from NCBI...")
-
         ncbi_table = load_ncbi_table(project_dir + config.get("input", "refseq"))
         inputfile = download_ncbi_genome(inputfile, ncbi_table)
-
         if not inputfile:
             print("Failed to download genome from NCBI.")
             return
-
         input_type = "protein" if inputfile.endswith(".faa.gz") else "dna"
 
     if input_type == "protein" or input_type == "dna":
@@ -142,13 +132,11 @@ def maincall(
         exit_code = run_blast(
             inputfile, input_type, blast_output, diamond_db, diamond_args, verbose
         )
-
         if exit_code is None:
             print(
                 "Unable to run diamond (make sure diamond is available in your PATH)."
             )
             return
-
         if exit_code != 0:
             print("Failed to run diamond.")
             if diamond_args is not None:
@@ -156,7 +144,6 @@ def maincall(
                     "Incorrect diamond args? Please check documentation or use default args."
                 )
             return
-
         annotations = load_diamond_results(blast_output)
     elif input_type == "eggnog":
         annotations = load_eggnog_data(inputfile)
@@ -167,13 +154,11 @@ def maincall(
 
     if verbose:
         print("Loading universe model...")
-
     if not universe_file:
         if universe:
             universe_file = f"{project_dir}{config.get('generated', 'folder')}universe_{universe}.xml.gz"
         else:
             universe_file = project_dir + config.get("generated", "default_universe")
-
     try:
         universe_model = load_cbmodel(universe_file, flavor="bigg")
         universe_model.id = model_id
@@ -189,7 +174,6 @@ def maincall(
     if reference:
         if verbose:
             print("Loading reference model...")
-
         try:
             ref_model = load_cbmodel(reference)
         except:
@@ -198,13 +182,10 @@ def maincall(
         ref_model = None
 
     if gapfill or init:
-
         if verbose:
             print("Loading media library...")
-
         if not mediadb:
             mediadb = project_dir + config.get("input", "media_library")
-
         try:
             media_db = load_media_db(mediadb)
         except IOError:
@@ -212,17 +193,14 @@ def maincall(
 
     if verbose:
         print("Scoring reactions...")
-
     gene_annotations = pd.read_csv(
         project_dir + config.get("generated", "gene_annotations"), sep="\t"
     )
     bigg_gprs = project_dir + config.get("generated", "bigg_gprs")
     gprs = pd.read_csv(bigg_gprs)
     gprs = gprs[gprs.reaction.isin(universe_model.reactions)]
-
     debug_output = model_id if debug else None
     scores, gene2gene = reaction_scoring(annotations, gprs, debug_output=debug_output)
-
     if scores is None:
         print(
             "The input genome did not match sufficient genes/reactions in the database."
@@ -231,15 +209,12 @@ def maincall(
 
     if not flavor:
         flavor = config.get("sbml", "default_flavor")
-
     init_env = None
-
     if init:
         if init in media_db:
             init_env = Environment.from_compounds(media_db[init])
         else:
             print(f"Error: medium {init} not in media database.")
-
     universe_model.metadata["Description"] = (
         "This model was built with CarveMe version " + version
     )
@@ -247,7 +222,6 @@ def maincall(
     if ensemble_size is None or ensemble_size <= 1:
         if verbose:
             print("Reconstructing a single model")
-
         model = carve_model(
             universe_model,
             scores,
@@ -264,15 +238,12 @@ def maincall(
             verbose=verbose,
         )
         annotate_genes(model, gene2gene, gene_annotations)
-
     else:
         if verbose:
             print("Building an ensemble of", ensemble_size, "models")
-
         ensemble = build_ensemble(
             universe_model, scores, ensemble_size, init_env=init_env
         )
-
         annotate_genes(ensemble.model, gene2gene, gene_annotations)
         save_ensemble(ensemble, outputfile, flavor=flavor)
         return
@@ -283,16 +254,12 @@ def maincall(
 
     if not gapfill:
         save_cbmodel(model, outputfile, flavor=flavor)
-
     else:
         media = gapfill.split(",")
-
         if verbose:
             m1, n1 = len(model.metabolites), len(model.reactions)
             print(f"Gap filling for {', '.join(media)}...")
-
         max_uptake = config.getint("gapfill", "max_uptake")
-
         if blind_gapfill:
             scores = None
         else:
@@ -306,101 +273,14 @@ def maincall(
             max_uptake=max_uptake,
             inplace=True,
         )
-
         if verbose:
             m2, n2 = len(model.metabolites), len(model.reactions)
             print(f"Added {(n2 - n1)} reactions and {(m2 - m1)} metabolites")
-
-        if init_env:
+        if init_env:  # Re-apply environment after gap-filling
             init_env.apply(model, inplace=True, warning=False)
-
         save_cbmodel(model, outputfile, flavor=flavor)
-
     if verbose:
         print("Done.")
-
-
-def read_input_file(input_file: str) -> pd.DataFrame:
-    """
-    Read and validate the input TSV file.
-
-    Expected columns: genome, universe, media_file, medium_id
-
-    Args:
-        input_file: Path to the TSV input file
-
-    Returns:
-        DataFrame containing the validated input data
-    """
-    try:
-        # Read the TSV file
-        if not os.path.exists(input_file):
-            print(f"Error: Input file not found: {input_file}")
-            sys.exit(1)
-
-        input_data = pd.read_csv(input_file, sep="\t")
-
-        # Define required columns
-        required_columns = ["genome", "universe", "media_file", "medium_id"]
-
-        # Check for required columns
-        missing_cols = set(required_columns) - set(input_data.columns)
-        if missing_cols:
-            print(f"Error: Missing required columns in input file: {missing_cols}")
-            sys.exit(1)
-
-        # Validate file existence for each genome, universe, and media file
-        for col in ["genome", "universe", "media_file"]:
-            invalid_files = [f for f in input_data[col] if not os.path.isfile(f)]
-            if invalid_files:
-                print(f"Error: Following {col} files not found:")
-                for f in invalid_files:
-                    print(f"  - {f}")
-                sys.exit(1)
-
-        # Validate that medium_id is not empty
-        if input_data["medium_id"].isnull().any():
-            print("Error: medium_id column contains empty values")
-            sys.exit(1)
-
-        return input_data
-
-    except pd.errors.EmptyDataError:
-        print(f"Error: Input file is empty: {input_file}")
-        sys.exit(1)
-    except pd.errors.ParserError:
-        print(
-            f"Error: Failed to parse input file (make sure it's a valid TSV): {input_file}"
-        )
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error reading input file: {str(e)}")
-        sys.exit(1)
-
-
-def process_genome_entry(genome_row, output_path, input_type, flavor, verbose, debug):
-    """Process a single genome entry from the input file.
-
-    Args:
-        genome_row: A row from the input DataFrame containing genome info
-        output_path: Path to output directory
-        input_type: Type of input (protein, dna, eggnog, diamond)
-        flavor: SBML flavor (fbc2, cobra, or default)
-        verbose: Verbose flag
-        debug: Debug flag
-    """
-    return maincall(
-        inputfile=genome_row["genome"],
-        input_type=input_type,
-        outputfile=f"{output_path}/{os.path.basename(genome_row['genome'])}.xml",
-        universe_file=genome_row["universe"],  # Use universe_file instead of universe
-        gapfill=genome_row["medium_id"],
-        init=genome_row["medium_id"],
-        mediadb=genome_row["media_file"],
-        verbose=verbose,
-        debug=debug,
-        flavor=flavor,
-    )
 
 
 def main():
@@ -408,12 +288,19 @@ def main():
         description="Reconstruct a metabolic model using CarveMe",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-
-    # Input file is required
     parser.add_argument(
-        "--input",
-        required=True,
-        help="Path to TSV input file with columns: genome, universe, media_file, medium_id",
+        "input",
+        metavar="INPUT",
+        nargs="+",
+        help="Input (protein fasta file by default, or a TSV file when using --tsv).\n"
+        "When used with -r an input pattern with wildcards can also be used.\n"
+        "When used with --refseq an NCBI RefSeq assembly accession is expected.",
+    )
+    # New flag for TSV input
+    parser.add_argument(
+        "--tsv",
+        action="store_true",
+        help="Interpret the input file as a TSV file with columns: genome, universe, media_file, medium_id",
     )
 
     input_type_args = parser.add_mutually_exclusive_group()
@@ -435,23 +322,19 @@ def main():
     parser.add_argument(
         "--diamond-args", help="Additional arguments for running diamond"
     )
-
     parser.add_argument(
-        "-p",
-        "--processes",
-        type=int,
-        default=1,
-        help="Number of processes to use for parallel genome processing (default: 1)",
+        "-r",
+        "--recursive",
+        action="store_true",
+        dest="recursive",
+        help="Bulk reconstruction from folder with genome files",
     )
-
     parser.add_argument(
         "-o",
         "--output",
         dest="output",
-        required=True,
-        help="Output folder for generated models",
+        help="SBML output file (or output folder if -r or --tsv is used)",
     )
-
     univ = parser.add_mutually_exclusive_group()
     univ.add_argument(
         "-u",
@@ -464,7 +347,6 @@ def main():
         dest="universe_file",
         help="Reaction universe file (SBML format)",
     )
-
     sbml = parser.add_mutually_exclusive_group()
     sbml.add_argument(
         "--cobra", action="store_true", help="Output SBML in old cobra format"
@@ -472,7 +354,6 @@ def main():
     sbml.add_argument(
         "--fbc2", action="store_true", help="Output SBML in sbml-fbc2 format"
     )
-
     parser.add_argument(
         "-n",
         "--ensemble",
@@ -480,17 +361,13 @@ def main():
         dest="ensemble",
         help="Build model ensemble with N models",
     )
-
     parser.add_argument(
         "-g", "--gapfill", dest="gapfill", help="Gap fill model for given media"
     )
-
     parser.add_argument(
         "-i", "--init", dest="init", help="Initialize model with given medium"
     )
-
     parser.add_argument("--mediadb", help="Media database file")
-
     parser.add_argument(
         "-v",
         "--verbose",
@@ -505,19 +382,15 @@ def main():
         dest="debug",
         help="Debug mode: writes intermediate results into output files",
     )
-
     parser.add_argument("--soft", help="Soft constraints file")
     parser.add_argument("--hard", help="Hard constraints file")
-
     parser.add_argument(
         "--reference", help="Manually curated model of a close reference species."
     )
-
     parser.add_argument(
         "--solver",
         help="Select MILP solver. Available options: cplex [default], gurobi.",
     )
-
     parser.add_argument(
         "--default-score", type=float, default=-1.0, help=argparse.SUPPRESS
     )
@@ -528,34 +401,18 @@ def main():
     parser.add_argument(
         "--reference-score", type=float, default=0.0, help=argparse.SUPPRESS
     )
-
     parser.add_argument("--blind-gapfill", action="store_true", help=argparse.SUPPRESS)
-
     args = parser.parse_args()
 
-    # Validate arguments
-    if args.gapfill and args.ensemble:
-        parser.error(
-            "Gap fill and ensemble generation cannot currently be combined (not implemented yet)."
-        )
-
-    if (args.soft or args.hard) and args.ensemble:
-        parser.error(
-            "Soft/hard constraints and ensemble generation cannot currently be combined (not implemented yet)."
-        )
-
-    if args.mediadb and not args.gapfill:
-        parser.error("--mediadb can only be used with --gapfill")
-
-    if args.refseq:
-        parser.error("--refseq is not supported with config mode")
-
+    # Set input type based on flags
     if args.egg:
         input_type = "eggnog"
     elif args.dna:
         input_type = "dna"
     elif args.diamond:
         input_type = "diamond"
+    elif args.refseq:
+        input_type = "refseq"
     else:
         input_type = "protein"
 
@@ -571,26 +428,116 @@ def main():
 
     first_run_check()
 
-    # Read and validate input file
-    input_df = read_input_file(args.input)
+    # If TSV flag is provided, parse the TSV and process each row
+    if args.tsv:
+        try:
+            tsv_df = pd.read_csv(args.input[0], sep="\t")
+        except Exception as e:
+            print("Error reading TSV file:", e)
+            return
 
-    process_fn = partial(
-        process_genome_entry,
-        output_path=args.output,
-        input_type=input_type,
-        flavor=flavor,
-        verbose=args.verbose,
-        debug=args.debug,
-    )
+        required_cols = {"genome", "universe", "media_file", "medium_id"}
+        if not required_cols.issubset(tsv_df.columns):
+            print("TSV file must contain the following columns:", required_cols)
+            return
 
-    # Process genomes based on number of processes
-    if args.processes > 1:
-        with Pool(processes=args.processes) as p:
-            p.map(process_fn, [row for _, row in input_df.iterrows()])
+        def process_row(row):
+            # Here we pass the TSV columns to the proper parameters:
+            # - 'genome' -> inputfile
+            # - 'universe' -> universe_file (overriding the default universe)
+            # - 'media_file' -> mediadb
+            # - 'medium_id' -> gapfill (you could also pass as init if desired)
+            maincall(
+                inputfile=row["genome"],
+                input_type=input_type,
+                outputfile=args.output,
+                diamond_args=args.diamond_args,
+                universe=None,
+                universe_file=row["universe"],
+                ensemble_size=args.ensemble,
+                verbose=args.verbose,
+                debug=args.debug,
+                flavor=flavor,
+                gapfill=row["medium_id"],
+                blind_gapfill=False,
+                init=None,
+                mediadb=row["media_file"],
+                default_score=args.default_score,
+                uptake_score=args.uptake_score,
+                soft_score=args.soft_score,
+                soft=args.soft,
+                hard=args.hard,
+                reference=args.reference,
+                ref_score=args.reference_score,
+                recursive_mode=True,  # so output file naming follows the recursive branch
+            )
+
+        rows = tsv_df.to_dict(orient="records")
+        if len(rows) > 1:
+            pool = Pool()
+            pool.map(process_row, rows)
+            pool.close()
+            pool.join()
+        else:
+            process_row(rows[0])
     else:
-        # Sequential processing
-        for _, row in input_df.iterrows():
-            process_fn(row)
+        if args.recursive:
+
+            def f(x):
+                maincall(
+                    inputfile=x,
+                    input_type=input_type,
+                    outputfile=args.output,
+                    diamond_args=args.diamond_args,
+                    universe=args.universe,
+                    universe_file=args.universe_file,
+                    ensemble_size=args.ensemble,
+                    verbose=args.verbose,
+                    flavor=flavor,
+                    gapfill=args.gapfill,
+                    blind_gapfill=False,
+                    init=args.init,
+                    mediadb=args.mediadb,
+                    default_score=args.default_score,
+                    uptake_score=args.uptake_score,
+                    soft_score=args.soft_score,
+                    soft=args.soft,
+                    hard=args.hard,
+                    reference=args.reference,
+                    ref_score=args.reference_score,
+                    recursive_mode=True,
+                )
+
+            p = Pool()
+            p.map(f, args.input)
+            p.close()
+            p.join()
+        else:
+            if len(args.input) > 1:
+                parser.error("Use -r when specifying more than one input file")
+            maincall(
+                inputfile=args.input[0],
+                input_type=input_type,
+                outputfile=args.output,
+                diamond_args=args.diamond_args,
+                universe=args.universe,
+                universe_file=args.universe_file,
+                ensemble_size=args.ensemble,
+                verbose=args.verbose,
+                debug=args.debug,
+                flavor=flavor,
+                gapfill=args.gapfill,
+                blind_gapfill=False,
+                init=args.init,
+                mediadb=args.mediadb,
+                default_score=args.default_score,
+                uptake_score=args.uptake_score,
+                soft_score=args.soft_score,
+                soft=args.soft,
+                hard=args.hard,
+                reference=args.reference,
+                ref_score=args.reference_score,
+            )
 
 
 if __name__ == "__main__":
