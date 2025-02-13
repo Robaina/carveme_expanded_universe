@@ -426,6 +426,9 @@ def parse_arguments() -> argparse.Namespace:
         "--reference-score", type=float, default=0.0, help=argparse.SUPPRESS
     )
     parser.add_argument("--blind-gapfill", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--processes", type=int, default=1, help="Number of processes to use"
+    )
     return parser.parse_args()
 
 
